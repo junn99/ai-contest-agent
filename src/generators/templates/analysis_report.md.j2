@@ -1,0 +1,72 @@
+# {{ contest_title }} 분석 보고서
+
+**주최:** {{ organizer }}
+**작성일:** {{ generated_date }}
+**작성자:** {{ author_name | default("참가자") }}
+
+---
+
+## 1. 서론
+
+### 1.1 배경 및 목적
+{{ background }}
+
+### 1.2 분석 범위
+{{ scope }}
+
+---
+
+## 2. 데이터 개요
+
+{% if data_analysis %}
+### 2.1 사용 데이터
+{{ data_description }}
+
+### 2.2 데이터 현황
+- 데이터 건수: {{ data_analysis.row_count | number_format }}건
+- 변수 수: {{ data_analysis.column_count }}개
+- 주요 변수: {{ data_analysis.columns | map(attribute='name') | join(', ') }}
+
+{% for insight in data_analysis.insights %}
+> 💡 {{ insight }}
+{% endfor %}
+{% else %}
+*본 보고서는 공개된 통계 자료 및 정책 문서를 기반으로 작성되었습니다.*
+{% endif %}
+
+---
+
+## 3. 분석 방법
+{{ methodology }}
+
+---
+
+## 4. 분석 결과
+
+### 4.1 주요 발견사항
+{{ findings }}
+
+{% if visualizations %}
+{% for viz in visualizations %}
+### 4.{{ loop.index + 1 }} {{ viz.title }}
+![{{ viz.title }}]({{ viz.path }})
+{{ viz.description }}
+{% endfor %}
+{% endif %}
+
+---
+
+## 5. 인사이트 및 정책 제안
+{{ insights_and_proposals }}
+
+---
+
+## 6. 결론
+{{ conclusion }}
+
+---
+
+## 참고문헌
+{% for ref in references %}
+- {{ ref }}
+{% endfor %}
