@@ -225,5 +225,141 @@ def list_contests(
     dashboard.show_status(contests, analyses, artifacts)
 
 
+@app.command()
+def run(
+    top_n: int = typer.Option(3, "--top", help="ROI 상위 N개 공모전에 보고서 생성"),
+    data_dir: str | None = typer.Option(None, "--data-dir", help="공공데이터 CSV 디렉토리"),
+) -> None:
+    """전체 파이프라인 자동 실행 (수집 → 분석 → 보고서 생성 → 알림)"""
+    from src.collectors.contestkorea import ContestKoreaCollector
+    from src.collectors.wevity import WevityCollector
+    from src.collectors.filters import filter_by_keywords, filter_by_deadline, filter_by_eligibility
+    from src.analyzers.contest_analyzer import ContestAnalyzer
+    from src.analyzers.roi_scorer import ROIScorer
+    from src.analyzers.pipeline import AnalysisPipeline
+    from src.generators.report_generator import ReportGenerator
+    from src.notifiers.deadline_notifier import DeadlineNotifier
+    from src.core.claude_cli import ClaudeCLI
+    from src.config import settings
+
+    async def _run() -> None:
+        storage = _get_storage()
+        dashboard = CLIDashboard(console=console)
+
+        # === 1. 수집 ===
+        console.print("\n[bold cyan][ 1/4 ] 공모전 수집 중...[/bold cyan]")
+        ck_collector = ContestKoreaCollector()
+        wv_collector = WevityCollector()
+
+        all_contests = []
+        try:
+            ck = await ck_collector.discover()
+            console.print(f"  콘테스트코리아: {len(ck)}건")
+            all_contests.extend(ck)
+        except Exception as e:
+            console.print(f"  [red]콘테스트코리아 실패: {e}[/red]")
+
+        try:
+            wv = await wv_collector.discover()
+            console.print(f"  위비티: {len(wv)}건")
+            all_contests.extend(wv)
+        except Exception as e:
+            console.print(f"  [red]위비티 실패: {e}[/red]")
+
+        if not all_contests:
+            console.print("[red]수집된 공모전이 없습니다. 종료합니다.[/red]")
+            return
+
+        # 필터링
+        filtered = [c for c in all_contests if filter_by_keywords(c)]
+        filtered = [c for c in filtered if filter_by_deadline(c, min_days=settings.min_preparation_days)]
+        filtered = [c for c in filtered if filter_by_eligibility(c) is not False]
+        console.print(f"  필터링 후: [green]{len(filtered)}건[/green] (전체 {len(all_contests)}건 중)")
+
+        storage.save_contests(filtered)
+
+        # === 2. 분석 ===
+        console.print("\n[bold cyan][ 2/4 ] Claude 분석 + ROI 스코어링...[/bold cyan]")
+        claude = ClaudeCLI()
+        analyzer = ContestAnalyzer(claude_cli=claude, settings=settings)
+        scorer = ROIScorer(settings=settings)
+        pipeline = AnalysisPipeline(analyzer=analyzer, scorer=scorer, settings=settings)
+
+        existing = storage.load_analyses()
+        analyzed_ids = {a.contest_id for a in existing}
+        to_analyze = [c for c in filtered if c.id not in analyzed_ids]
+
+        new_analyses = []
+        if to_analyze:
+            console.print(f"  신규 분석: {len(to_analyze)}건")
+            new_analyses = await pipeline.run(to_analyze)
+            for a in new_analyses:
+                storage.save_analysis(a)
+            console.print(f"  [green]분석 완료: {len(new_analyses)}건[/green]")
+        else:
+            console.print("  신규 분석 대상 없음 (기존 분석 결과 사용)")
+
+        all_analyses = storage.load_analyses()
+        all_analyses.sort(key=lambda a: a.roi_score, reverse=True)
+
+        if all_analyses:
+            dashboard.show_roi_ranking(all_analyses, contests=filtered)
+
+        # === 3. 보고서 생성 ===
+        console.print(f"\n[bold cyan][ 3/4 ] ROI 상위 {top_n}개 보고서 생성...[/bold cyan]")
+        generator = ReportGenerator(claude_cli=claude)
+        existing_artifacts = storage.load_artifacts()
+        generated_ids = {a.contest_id for a in existing_artifacts}
+
+        targets = [a for a in all_analyses if a.contest_id not in generated_ids][:top_n]
+
+        for i, analysis in enumerate(targets, 1):
+            contest = next((c for c in filtered if c.id == analysis.contest_id), None)
+            if not contest:
+                continue
+
+            console.print(f"  [{i}/{len(targets)}] {contest.title}")
+
+            # data_dir에서 contest_id에 매칭되는 CSV 탐색
+            csv_path = None
+            if data_dir:
+                data_p = Path(data_dir)
+                for ext in ("*.csv", "*.xlsx", "*.xls"):
+                    matches = list(data_p.glob(ext))
+                    if matches:
+                        csv_path = matches[0]
+                        break
+
+            try:
+                artifact = await generator.generate(contest, analysis, data_path=csv_path)
+                storage.save_artifact(artifact)
+                console.print(f"    [green]완료 → {artifact.file_path}[/green]")
+            except Exception as e:
+                console.print(f"    [red]실패: {e}[/red]")
+
+        # === 4. 마감 알림 ===
+        console.print("\n[bold cyan][ 4/4 ] 마감 알림 확인...[/bold cyan]")
+        notifier = DeadlineNotifier(settings=settings)
+        alerts = notifier.check_deadlines(filtered)
+        if alerts:
+            dashboard.show_deadlines(alerts)
+        else:
+            console.print("  마감 임박 공모전 없음")
+
+        # === 요약 ===
+        console.print("\n" + "=" * 50)
+        all_artifacts = storage.load_artifacts()
+        stats = {
+            "total": len(filtered),
+            "analyzed": len(all_analyses),
+            "generated": len(all_artifacts),
+            "submitted": 0,
+        }
+        dashboard.show_summary(stats)
+        console.print("[bold green]전체 파이프라인 완료![/bold green]\n")
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()
