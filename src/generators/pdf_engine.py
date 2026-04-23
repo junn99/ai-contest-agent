@@ -1,5 +1,6 @@
 """Markdown → HTML → PDF 변환 엔진."""
 from pathlib import Path
+from urllib.parse import urlparse, unquote
 
 import markdown as md_lib
 
@@ -70,11 +71,34 @@ class PDFEngine:
         html_path = output_path.with_suffix(".html")
         html_path.write_text(html, encoding="utf-8")
 
-        from weasyprint import HTML as WeasyprintHTML
+        from weasyprint import HTML as WeasyprintHTML, default_url_fetcher
 
-        WeasyprintHTML(string=html, base_url=str(markdown_path.parent)).write_pdf(
-            str(output_path)
-        )
+        allowed_root = markdown_path.parent.resolve()
+
+        def _safe_fetcher(url):
+            if url.startswith("data:"):
+                return default_url_fetcher(url)
+            parsed = urlparse(url)
+            scheme = parsed.scheme
+            if scheme in ("http", "https"):
+                raise ValueError(f"외부 URL 차단: {url}")
+            if scheme == "file":
+                target = Path(unquote(parsed.path)).resolve()
+                try:
+                    target.relative_to(allowed_root)
+                except ValueError:
+                    raise ValueError(f"보고서 디렉토리 밖 파일 차단: {url}")
+                return default_url_fetcher(url)
+            if scheme == "" and not url.startswith("/"):
+                # 상대 경로 — base_url 기준으로 해석되므로 OK
+                return default_url_fetcher(url)
+            raise ValueError(f"허용되지 않는 URL 스킴: {url}")
+
+        WeasyprintHTML(
+            string=html,
+            base_url=str(allowed_root),
+            url_fetcher=_safe_fetcher,
+        ).write_pdf(str(output_path))
 
         return output_path
 

@@ -23,7 +23,7 @@ def collect() -> None:
     """콘테스트코리아 + 위비티에서 공모전 수집"""
     from src.collectors.contestkorea import ContestKoreaCollector
     from src.collectors.wevity import WevityCollector
-    from src.collectors.filters import filter_by_keywords, filter_by_deadline, filter_by_eligibility
+    from src.collectors.filters import apply_all_filters
     from src.config import settings
 
     async def _run() -> None:
@@ -42,16 +42,7 @@ def collect() -> None:
         console.print(f"총 수집: {len(all_contests)}건")
 
         # 필터링
-        after_keyword = [c for c in all_contests if filter_by_keywords(c)]
-        after_deadline = [
-            c for c in after_keyword
-            if filter_by_deadline(c, min_days=settings.min_preparation_days)
-        ]
-        filtered = []
-        for c in after_deadline:
-            if filter_by_eligibility(c) is not False:
-                filtered.append(c)
-
+        filtered = apply_all_filters(all_contests, min_preparation_days=settings.min_preparation_days)
         console.print(f"필터링 후: {len(filtered)}건")
 
         storage = _get_storage()
@@ -90,8 +81,8 @@ def analyze() -> None:
         console.print(f"[bold]분석 시작: {len(unanalyzed)}건[/bold]")
 
         claude = ClaudeCLI()
-        analyzer = ContestAnalyzer(claude_cli=claude, settings=settings)
-        scorer = ROIScorer(settings=settings)
+        analyzer = ContestAnalyzer(claude_cli=claude)
+        scorer = ROIScorer()
         pipeline = AnalysisPipeline(analyzer=analyzer, scorer=scorer, settings=settings)
 
         analyses = await pipeline.run(unanalyzed)
@@ -120,14 +111,12 @@ def generate(
 
     async def _run() -> None:
         storage = _get_storage()
-        contests = storage.load_contests()
-        contest = next((c for c in contests if c.id == contest_id), None)
+        contest = storage.get_contest(contest_id)
         if not contest:
             console.print(f"[red]공모전 '{contest_id}'을 찾을 수 없습니다.[/red]")
             raise typer.Exit(1)
 
-        analyses = storage.load_analyses()
-        analysis = next((a for a in analyses if a.contest_id == contest_id), None)
+        analysis = storage.get_analysis(contest_id)
         if not analysis:
             console.print(f"[red]공모전 '{contest_id}'의 분석 결과가 없습니다. 먼저 analyze를 실행하세요.[/red]")
             raise typer.Exit(1)
@@ -171,15 +160,13 @@ def guide(
 ) -> None:
     """특정 공모전 제출 가이드 출력"""
     storage = _get_storage()
-    contests = storage.load_contests()
-    contest = next((c for c in contests if c.id == contest_id), None)
+    contest = storage.get_contest(contest_id)
 
     if not contest:
         console.print(f"[red]공모전 '{contest_id}'을 찾을 수 없습니다.[/red]")
         raise typer.Exit(1)
 
-    analyses = storage.load_analyses()
-    analysis = next((a for a in analyses if a.contest_id == contest_id), None)
+    analysis = storage.get_analysis(contest_id)
 
     from rich.panel import Panel
     from datetime import date
@@ -229,64 +216,54 @@ def list_contests(
 def run(
     top_n: int = typer.Option(3, "--top", help="ROI 상위 N개 공모전에 보고서 생성"),
     data_dir: str | None = typer.Option(None, "--data-dir", help="공공데이터 CSV 디렉토리"),
+    no_push: bool = typer.Option(False, "--no-push", help="텔레그램 카드/다이제스트 자동 push 비활성화"),
 ) -> None:
     """전체 파이프라인 자동 실행 (수집 → 분석 → 보고서 생성 → 알림)"""
     from src.collectors.contestkorea import ContestKoreaCollector
     from src.collectors.wevity import WevityCollector
-    from src.collectors.filters import filter_by_keywords, filter_by_deadline, filter_by_eligibility
+    from src.collectors.filters import apply_all_filters
     from src.analyzers.contest_analyzer import ContestAnalyzer
     from src.analyzers.roi_scorer import ROIScorer
     from src.analyzers.pipeline import AnalysisPipeline
     from src.generators.report_generator import ReportGenerator
     from src.notifiers.deadline_notifier import DeadlineNotifier
+    from src.notifiers.telegram import TelegramNotifier
     from src.core.claude_cli import ClaudeCLI
     from src.config import settings
 
-    async def _run() -> None:
-        storage = _get_storage()
-        dashboard = CLIDashboard(console=console)
-
-        # === 1. 수집 ===
+    async def _step_collect() -> tuple[list, list]:
+        """returns (raw_all, filtered)"""
         console.print("\n[bold cyan][ 1/4 ] 공모전 수집 중...[/bold cyan]")
-        ck_collector = ContestKoreaCollector()
-        wv_collector = WevityCollector()
-
+        collectors = [
+            ("콘테스트코리아", ContestKoreaCollector()),
+            ("위비티", WevityCollector()),
+        ]
         all_contests = []
-        try:
-            ck = await ck_collector.discover()
-            console.print(f"  콘테스트코리아: {len(ck)}건")
-            all_contests.extend(ck)
-        except Exception as e:
-            console.print(f"  [red]콘테스트코리아 실패: {e}[/red]")
-
-        try:
-            wv = await wv_collector.discover()
-            console.print(f"  위비티: {len(wv)}건")
-            all_contests.extend(wv)
-        except Exception as e:
-            console.print(f"  [red]위비티 실패: {e}[/red]")
+        for name, col in collectors:
+            try:
+                items = await col.discover()
+                console.print(f"  {name}: {len(items)}건")
+                all_contests.extend(items)
+            except Exception as exc:
+                console.print(f"  [red]{name} 실패: {exc}[/red]")
+                logger.error("collector_failed", collector=name, error=str(exc), exc_info=True)
 
         if not all_contests:
-            console.print("[red]수집된 공모전이 없습니다. 종료합니다.[/red]")
-            return
+            return [], []
 
-        # 필터링
-        filtered = [c for c in all_contests if filter_by_keywords(c)]
-        filtered = [c for c in filtered if filter_by_deadline(c, min_days=settings.min_preparation_days)]
-        filtered = [c for c in filtered if filter_by_eligibility(c) is not False]
+        filtered = apply_all_filters(all_contests, min_preparation_days=settings.min_preparation_days)
         console.print(f"  필터링 후: [green]{len(filtered)}건[/green] (전체 {len(all_contests)}건 중)")
+        return all_contests, filtered
 
-        storage.save_contests(filtered)
-
-        # === 2. 분석 ===
+    async def _step_analyze(filtered: list, claude: ClaudeCLI) -> tuple[list, list]:
+        """returns (new_analyses, all_analyses_sorted)"""
         console.print("\n[bold cyan][ 2/4 ] Claude 분석 + ROI 스코어링...[/bold cyan]")
-        claude = ClaudeCLI()
-        analyzer = ContestAnalyzer(claude_cli=claude, settings=settings)
-        scorer = ROIScorer(settings=settings)
+        storage = _get_storage()
+        analyzer = ContestAnalyzer(claude_cli=claude)
+        scorer = ROIScorer()
         pipeline = AnalysisPipeline(analyzer=analyzer, scorer=scorer, settings=settings)
 
-        existing = storage.load_analyses()
-        analyzed_ids = {a.contest_id for a in existing}
+        analyzed_ids = {a.contest_id for a in storage.load_analyses()}
         to_analyze = [c for c in filtered if c.id not in analyzed_ids]
 
         new_analyses = []
@@ -299,45 +276,46 @@ def run(
         else:
             console.print("  신규 분석 대상 없음 (기존 분석 결과 사용)")
 
-        all_analyses = storage.load_analyses()
-        all_analyses.sort(key=lambda a: a.roi_score, reverse=True)
+        return new_analyses, storage.load_analyses_sorted_by_roi()
 
-        if all_analyses:
-            dashboard.show_roi_ranking(all_analyses, contests=filtered)
-
-        # === 3. 보고서 생성 ===
+    async def _step_generate(
+        all_analyses: list, filtered: list, top_n: int, data_dir: str | None, claude: ClaudeCLI
+    ) -> list[str]:
+        """returns generated_titles"""
         console.print(f"\n[bold cyan][ 3/4 ] ROI 상위 {top_n}개 보고서 생성...[/bold cyan]")
+        storage = _get_storage()
         generator = ReportGenerator(claude_cli=claude)
-        existing_artifacts = storage.load_artifacts()
-        generated_ids = {a.contest_id for a in existing_artifacts}
-
+        generated_ids = {a.contest_id for a in storage.load_artifacts()}
         targets = [a for a in all_analyses if a.contest_id not in generated_ids][:top_n]
 
+        csv_path: Path | None = None
+        if data_dir:
+            data_p = Path(data_dir)
+            for ext in ("*.csv", "*.xlsx", "*.xls"):
+                matches = list(data_p.glob(ext))
+                if matches:
+                    csv_path = matches[0]
+                    break
+
+        generated_titles: list[str] = []
         for i, analysis in enumerate(targets, 1):
             contest = next((c for c in filtered if c.id == analysis.contest_id), None)
             if not contest:
                 continue
-
             console.print(f"  [{i}/{len(targets)}] {contest.title}")
-
-            # data_dir에서 contest_id에 매칭되는 CSV 탐색
-            csv_path = None
-            if data_dir:
-                data_p = Path(data_dir)
-                for ext in ("*.csv", "*.xlsx", "*.xls"):
-                    matches = list(data_p.glob(ext))
-                    if matches:
-                        csv_path = matches[0]
-                        break
-
             try:
                 artifact = await generator.generate(contest, analysis, data_path=csv_path)
                 storage.save_artifact(artifact)
+                generated_titles.append(contest.title)
                 console.print(f"    [green]완료 → {artifact.file_path}[/green]")
-            except Exception as e:
-                console.print(f"    [red]실패: {e}[/red]")
+            except Exception as exc:
+                console.print(f"    [red]실패: {exc}[/red]")
+                logger.error("report_generation_failed", contest_id=contest.id, error=str(exc), exc_info=True)
 
-        # === 4. 마감 알림 ===
+        return generated_titles
+
+    def _step_deadlines(filtered: list, dashboard: CLIDashboard) -> list:
+        """returns alerts"""
         console.print("\n[bold cyan][ 4/4 ] 마감 알림 확인...[/bold cyan]")
         notifier = DeadlineNotifier(settings=settings)
         alerts = notifier.check_deadlines(filtered)
@@ -345,20 +323,134 @@ def run(
             dashboard.show_deadlines(alerts)
         else:
             console.print("  마감 임박 공모전 없음")
+        return alerts
 
-        # === 요약 ===
+    def _step_summary(filtered: list, all_analyses: list, dashboard: CLIDashboard) -> None:
+        storage = _get_storage()
         console.print("\n" + "=" * 50)
-        all_artifacts = storage.load_artifacts()
         stats = {
             "total": len(filtered),
             "analyzed": len(all_analyses),
-            "generated": len(all_artifacts),
+            "generated": len(storage.load_artifacts()),
             "submitted": 0,
         }
         dashboard.show_summary(stats)
         console.print("[bold green]전체 파이프라인 완료![/bold green]\n")
 
+    async def _step_telegram(
+        new_contests_count: int,
+        filtered_count: int,
+        new_analyses_count: int,
+        generated_titles: list[str],
+        alerts: list,
+        filtered: list,
+        no_push: bool,
+    ) -> None:
+        if no_push:
+            console.print("[dim]--no-push: 텔레그램 푸시 생략[/dim]")
+            return
+        if not (settings.telegram_bot_token and settings.telegram_chat_id):
+            console.print("[dim]텔레그램 미설정 — .env에 INFOKE_TELEGRAM_BOT_TOKEN, INFOKE_TELEGRAM_CHAT_ID 추가[/dim]")
+            return
+        tg = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        alert_messages = [f"[D-{a.days_remaining}] {a.contest_title}" for a in alerts]
+        message = tg.format_run_summary(
+            new_contests=new_contests_count,
+            total_filtered=filtered_count,
+            new_analyses=new_analyses_count,
+            new_reports=generated_titles,
+            alerts=alert_messages,
+        )
+        await tg.send(message)
+
+        storage = _get_storage()
+        all_analyses = storage.load_analyses_sorted_by_roi()
+        all_artifacts = storage.load_artifacts()
+        await tg.send_digest(
+            contests=filtered,
+            analyses=all_analyses,
+            artifacts=all_artifacts,
+            alerts=alert_messages,
+        )
+        console.print("[green]텔레그램 다이제스트 카드 전송 완료[/green]")
+
+    async def _run() -> None:
+        dashboard = CLIDashboard(console=console)
+        storage = _get_storage()
+
+        all_contests, filtered = await _step_collect()
+        if not all_contests:
+            console.print("[red]수집된 공모전이 없습니다. 종료합니다.[/red]")
+            return
+        storage.save_contests(filtered)
+
+        claude = ClaudeCLI()
+        new_analyses, all_analyses = await _step_analyze(filtered, claude)
+        if all_analyses:
+            dashboard.show_roi_ranking(all_analyses, contests=filtered)
+
+        generated_titles = await _step_generate(all_analyses, filtered, top_n, data_dir, claude)
+        alerts = _step_deadlines(filtered, dashboard)
+        _step_summary(filtered, all_analyses, dashboard)
+        await _step_telegram(
+            len(all_contests), len(filtered), len(new_analyses), generated_titles, alerts,
+            filtered=filtered,
+            no_push=no_push,
+        )
+
     asyncio.run(_run())
+
+
+@app.command()
+def digest(
+    top_n: int = typer.Option(5, "--top", help="ROI 상위 N개 카드 전송"),
+) -> None:
+    """텔레그램에 다이제스트 카드 수동 전송 (cron 등록 금지 — run이 자동 포함)"""
+    from src.notifiers.telegram import TelegramNotifier
+    from src.notifiers.deadline_notifier import DeadlineNotifier
+    from src.config import settings
+
+    async def _run() -> None:
+        if not (settings.telegram_bot_token and settings.telegram_chat_id):
+            console.print("[red]텔레그램 미설정 — .env에 INFOKE_TELEGRAM_BOT_TOKEN, INFOKE_TELEGRAM_CHAT_ID 추가[/red]")
+            raise typer.Exit(1)
+
+        storage = _get_storage()
+        contests = storage.load_contests()
+        analyses = storage.load_analyses_sorted_by_roi()
+        artifacts = storage.load_artifacts()
+
+        if not contests:
+            console.print("[yellow]공모전 데이터 없음. 먼저 run 또는 collect를 실행하세요.[/yellow]")
+            raise typer.Exit(1)
+
+        notifier = DeadlineNotifier(settings=settings)
+        raw_alerts = notifier.check_deadlines(contests)
+        alert_messages = [f"[D-{a.days_remaining}] {a.contest_title}" for a in raw_alerts]
+
+        tg = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+        console.print(f"[bold]다이제스트 전송 중 (상위 {top_n}개)...[/bold]")
+        ok = await tg.send_digest(
+            contests=contests,
+            analyses=analyses,
+            artifacts=artifacts,
+            alerts=alert_messages,
+            top_n=top_n,
+        )
+        if ok:
+            console.print("[green]다이제스트 전송 완료[/green]")
+        else:
+            console.print("[red]다이제스트 전송 실패[/red]")
+            raise typer.Exit(1)
+
+    asyncio.run(_run())
+
+
+@app.command()
+def bot() -> None:
+    """텔레그램 에이전틱 봇 실행 (long polling)"""
+    from src.bot.telegram_bot import main as bot_main
+    bot_main()
 
 
 if __name__ == "__main__":

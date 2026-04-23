@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import structlog
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
 from src.core.claude_cli import ClaudeCLI
@@ -213,7 +213,10 @@ class ReportGenerator:
         """Claude 2회 호출 후 Jinja2로 Markdown 조합."""
         env = Environment(
             loader=FileSystemLoader(str(self.template_dir)),
-            autoescape=False,
+            autoescape=select_autoescape(
+                enabled_extensions=("html", "htm"),
+                default_for_string=False,
+            ),
         )
         env.filters["number_format"] = lambda v: f"{v:,}"
 

@@ -3,3 +3,5 @@ data/
 *.pyc
 __pycache__/
 .venv/
+webapp/data/mock.json
+webapp/data/_dev/

@@ -1,5 +1,8 @@
 """Phase 1 verification tests — no DB connection required."""
 import pytest
+
+pytest.skip("archived: db/state_machine moved to archive/", allow_module_level=True)
+
 from datetime import date, datetime
 
 from src.models.contest import ContestInfo

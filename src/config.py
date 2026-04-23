@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     min_preparation_days: int = 7
     max_claude_calls_per_contest: int = 5
     roi_threshold: float = 3.0
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    webapp_url: str = "https://junn99.github.io/infoke/"
 
     model_config = {"env_file": ".env", "env_prefix": "INFOKE_"}
 

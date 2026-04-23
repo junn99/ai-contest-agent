@@ -1,0 +1,21 @@
+{
+  "update_id": 123456790,
+  "message": {
+    "message_id": 43,
+    "from": {
+      "id": 987654321,
+      "is_bot": false,
+      "first_name": "Test",
+      "username": "testuser",
+      "language_code": "ko"
+    },
+    "chat": {
+      "id": 987654321,
+      "first_name": "Test",
+      "username": "testuser",
+      "type": "private"
+    },
+    "date": 1745136060,
+    "text": "/status"
+  }
+}

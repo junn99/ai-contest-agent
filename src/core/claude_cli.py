@@ -1,6 +1,5 @@
 import asyncio
 import json
-import subprocess
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -18,24 +17,29 @@ class ClaudeCLIParseError(Exception):
 
 class ClaudeCLI:
     def __init__(self, semaphore_limit: int = 3, timeout: int = 120) -> None:
+        self.semaphore_limit = semaphore_limit
         self._semaphore = asyncio.Semaphore(semaphore_limit)
         self._timeout = timeout
 
     async def call(self, prompt: str) -> str:
         """Basic text response from Claude CLI."""
         async with self._semaphore:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    ["claude", "-p", prompt],
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout,
-                ),
+            proc = await asyncio.create_subprocess_exec(
+                "claude", "-p", prompt,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode != 0:
-                raise ClaudeCLIError(result.stderr)
-            return result.stdout.strip()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise ClaudeCLIError(f"timeout after {self._timeout}s")
+            if proc.returncode != 0:
+                raise ClaudeCLIError(stderr.decode("utf-8", errors="replace"))
+            return stdout.decode("utf-8", errors="replace").strip()
 
     async def call_json(self, prompt: str, model: type[T]) -> T:
         """Structured JSON response parsed into a Pydantic model."""
@@ -46,7 +50,7 @@ class ClaudeCLI:
             f"{json.dumps(schema_hint, ensure_ascii=False)}"
         )
 
-        last_exc: Exception = ClaudeCLIParseError("No attempts made")
+        last_exc: Exception = ClaudeCLIParseError("0 attempts made")
         for attempt in range(3):
             raw = await self.call(full_prompt)
             cleaned = raw.strip()

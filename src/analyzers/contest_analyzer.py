@@ -4,6 +4,7 @@ from datetime import datetime
 import structlog
 from pydantic import BaseModel
 
+from src.analyzers.roi_scorer import ROIScorer
 from src.core.claude_cli import ClaudeCLI
 from src.models.analysis import ContestAnalysis
 from src.models.contest import ContestInfo
@@ -29,8 +30,9 @@ class AnalysisStep2(BaseModel):
 class ContestAnalyzer:
     """Claude CLI 기반 공모전 분석기"""
 
-    def __init__(self, claude_cli: ClaudeCLI) -> None:
+    def __init__(self, claude_cli: ClaudeCLI, scorer: ROIScorer | None = None) -> None:
         self.claude = claude_cli
+        self.scorer = scorer or ROIScorer()
 
     async def analyze(self, contest: ContestInfo) -> ContestAnalysis:
         """공모전 종합 분석 — Claude 호출 최대 2회로 통합"""
@@ -79,9 +81,6 @@ class ContestAnalyzer:
         log.info("step2_complete", approach_length=len(step2.suggested_approach))
 
         # ROI 스코어 계산
-        from src.analyzers.roi_scorer import ROIScorer
-
-        scorer = ROIScorer()
         # Assemble partial analysis to compute ROI
         partial = ContestAnalysis(
             contest_id=contest.id,
@@ -98,7 +97,7 @@ class ContestAnalyzer:
             ai_restriction=step1.ai_restriction,
             analyzed_at=datetime.utcnow(),
         )
-        roi_score, roi_breakdown = scorer.calculate(partial, contest)
+        roi_score, roi_breakdown = self.scorer.calculate(partial, contest)
 
         analysis = ContestAnalysis(
             contest_id=contest.id,

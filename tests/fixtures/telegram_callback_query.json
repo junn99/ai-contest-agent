@@ -1,0 +1,40 @@
+{
+  "update_id": 123456789,
+  "callback_query": {
+    "id": "1234567890",
+    "from": {
+      "id": 987654321,
+      "is_bot": false,
+      "first_name": "Test",
+      "username": "testuser",
+      "language_code": "ko"
+    },
+    "message": {
+      "message_id": 42,
+      "from": {
+        "id": 1111111111,
+        "is_bot": true,
+        "first_name": "InfokeBot",
+        "username": "infokebot"
+      },
+      "chat": {
+        "id": 987654321,
+        "first_name": "Test",
+        "username": "testuser",
+        "type": "private"
+      },
+      "date": 1745136000,
+      "text": "공모전 카드",
+      "reply_markup": {
+        "inline_keyboard": [
+          [
+            {"text": "📥 PDF", "callback_data": "pdf:ck_202603300044"},
+            {"text": "📋 가이드", "callback_data": "gd:ck_202603300044"}
+          ]
+        ]
+      }
+    },
+    "chat_instance": "1234567890123456789",
+    "data": "pdf:ck_202603300044"
+  }
+}

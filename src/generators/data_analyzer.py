@@ -107,7 +107,7 @@ class DataAnalyzer:
             return []
 
         num_cols = df.select_dtypes(include="number").columns.tolist()
-        cat_cols = df.select_dtypes(include=["str", "object", "category"]).columns.tolist()
+        cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
 
         # 날짜/시간 컬럼 감지
         date_cols = [

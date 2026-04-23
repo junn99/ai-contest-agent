@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>공모전 에이전트</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'media',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["'Noto Sans KR'", 'system-ui', '-apple-system', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen">
+
+<div data-app-root class="max-w-5xl mx-auto px-4 py-4 space-y-4">
+
+  <!-- Header -->
+  <header data-header class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <h1 class="text-lg font-bold text-gray-900 dark:text-white">공모전 에이전트</h1>
+        <p class="text-xs text-gray-500 dark:text-gray-400" data-last-updated>마지막 수집: —</p>
+      </div>
+      <div class="flex gap-3 text-center">
+        <div class="px-3 py-1 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+          <p class="text-xl font-bold text-blue-600 dark:text-blue-400" data-stat-total>—</p>
+          <p class="text-xs text-gray-500">전체</p>
+        </div>
+        <div class="px-3 py-1 bg-red-50 dark:bg-red-900/30 rounded-lg">
+          <p class="text-xl font-bold text-red-500" data-stat-imminent>—</p>
+          <p class="text-xs text-gray-500">마감임박</p>
+        </div>
+        <div class="px-3 py-1 bg-green-50 dark:bg-green-900/30 rounded-lg">
+          <p class="text-xl font-bold text-green-600 dark:text-green-400" data-stat-reports>—</p>
+          <p class="text-xs text-gray-500">보고서</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Filters -->
+  <section data-filters class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3">
+    <div class="flex flex-wrap gap-2 items-center">
+      <input
+        data-filter-keyword
+        type="search"
+        placeholder="공모전 검색"
+        class="flex-1 min-w-[140px] text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+      >
+      <select
+        data-filter-roi
+        class="text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 cursor-pointer"
+      >
+        <option value="">ROI 전체</option>
+        <option value="8">8.0 이상</option>
+        <option value="7">7.0 이상</option>
+        <option value="5">5.0 이상</option>
+      </select>
+      <select
+        data-filter-category
+        class="text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 cursor-pointer"
+      >
+        <option value="">카테고리 전체</option>
+      </select>
+      <select
+        data-sort
+        class="text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 cursor-pointer"
+      >
+        <option value="roi">ROI순</option>
+        <option value="deadline">마감순</option>
+        <option value="prize">상금순</option>
+      </select>
+      <label class="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+        <input
+          data-filter-imminent
+          type="checkbox"
+          class="rounded border-gray-300 text-red-500 cursor-pointer"
+        >
+        <span class="text-gray-700 dark:text-gray-300">마감 임박만</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- Card list -->
+  <main data-card-list class="empty-state">
+    <p class="text-gray-400">공모전 데이터를 불러오는 중...</p>
+  </main>
+
+  <!-- Charts -->
+  <section data-charts class="mt-2">
+    <div class="chart-container">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">ROI 분포</h2>
+      <canvas data-chart-roi height="180"></canvas>
+    </div>
+    <div class="chart-container">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">카테고리별 공모전</h2>
+      <canvas data-chart-category height="180"></canvas>
+    </div>
+  </section>
+
+</div>
+
+<!-- Card template — cloned by app.js via cloneNode(true) -->
+<template data-card-template>
+  <article
+    class="contest-card"
+    data-card-id=""
+    data-roi=""
+    data-d-day=""
+    data-category=""
+  >
+    <!-- Card header -->
+    <div class="p-4 pb-2">
+      <div class="flex items-start justify-between gap-2 mb-2">
+        <div class="flex flex-wrap gap-1">
+          <!-- D-day badge -->
+          <span data-d-day class="dday-badge text-xs font-bold px-2 py-0.5 rounded-full"></span>
+          <!-- Category badge -->
+          <span data-category class="category-badge text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"></span>
+          <!-- Status badge -->
+          <span class="status-badge text-xs px-2 py-0.5 rounded-full"></span>
+        </div>
+        <!-- ROI score -->
+        <span data-roi data-roi-badge class="roi-stars text-sm whitespace-nowrap" title="ROI 점수"></span>
+      </div>
+
+      <!-- Title -->
+      <h2 data-title class="card-title text-sm font-semibold leading-snug text-gray-900 dark:text-white line-clamp-2 mb-3"></h2>
+
+      <!-- Info grid (collapsed view) -->
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
+        <div>
+          <dt class="inline text-gray-400">주최 </dt>
+          <dd data-host class="card-host inline font-medium text-gray-700 dark:text-gray-200"></dd>
+        </div>
+        <div>
+          <dt class="inline text-gray-400">마감 </dt>
+          <dd data-deadline class="card-deadline inline font-medium text-gray-700 dark:text-gray-200"></dd>
+        </div>
+        <div>
+          <dt class="inline text-gray-400">상금 </dt>
+          <dd data-prize class="card-prize inline font-medium text-gray-700 dark:text-gray-200"></dd>
+        </div>
+        <div>
+          <dt class="inline text-gray-400">난이도 </dt>
+          <dd data-difficulty class="card-difficulty inline font-medium text-gray-700 dark:text-gray-200"></dd>
+        </div>
+      </dl>
+    </div>
+
+    <!-- Toggle (details/summary) -->
+    <details data-toggle class="border-t border-gray-100 dark:border-gray-700 px-4 py-2">
+      <summary class="text-xs font-medium text-gray-500 dark:text-gray-400 py-1 hover:text-gray-700">
+        상세 분석 보기
+      </summary>
+      <div class="mt-2 space-y-2 text-xs text-gray-700 dark:text-gray-300">
+        <div>
+          <p class="font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide text-[10px] mb-0.5">접근 전략</p>
+          <p data-analysis-approach class="card-approach leading-relaxed"></p>
+        </div>
+        <div>
+          <p class="font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide text-[10px] mb-0.5">제출물</p>
+          <ul data-analysis-submission class="card-submission list-disc list-inside space-y-0.5"></ul>
+        </div>
+        <div>
+          <p class="font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide text-[10px] mb-0.5">공공데이터 키워드</p>
+          <div data-analysis-keywords class="card-keywords flex flex-wrap gap-1"></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Action buttons -->
+    <div class="card-actions px-4 py-3 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2">
+      <a data-action-pdf class="btn-pdf action-btn action-btn-pdf hidden" href="#" target="_blank" rel="noopener">
+        📥 PDF
+      </a>
+      <a data-action-link class="btn-link action-btn action-btn-link" href="#" target="_blank" rel="noopener">
+        🔗 원문
+      </a>
+      <button data-action-generate class="btn-generate action-btn action-btn-generate hidden" type="button">
+        ⚡ 생성
+      </button>
+    </div>
+  </article>
+</template>
+
+<script src="app.js" defer></script>
+</body>
+</html>

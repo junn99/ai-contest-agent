@@ -95,3 +95,14 @@ def filter_by_deadline(
 
     days_remaining = (contest.deadline - today).days
     return days_remaining >= min_days
+
+
+def apply_all_filters(
+    contests: list[ContestInfo],
+    min_preparation_days: int = MIN_PREPARATION_DAYS,
+    today: date | None = None,
+) -> list[ContestInfo]:
+    """3-필터 체인 단일 진입점: 키워드 → 마감일 → 자격."""
+    after_kw = [c for c in contests if filter_by_keywords(c)]
+    after_dl = [c for c in after_kw if filter_by_deadline(c, min_days=min_preparation_days, today=today)]
+    return [c for c in after_dl if filter_by_eligibility(c) is not False]

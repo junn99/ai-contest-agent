@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
@@ -15,3 +17,4 @@ class ReportArtifact(BaseModel):
     word_count: int
     generated_at: datetime
     generation_duration_sec: float
+    status: Literal["pending", "running", "done", "failed"] = "done"
